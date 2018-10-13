@@ -26,6 +26,7 @@ class Client(url: String)(implicit wsClient: StandaloneWSClient) extends JsonBod
 
   private def runRequest[Resp <: Response[T], T <: RequestType](req: Request[T, Resp])
                                                                (implicit writes: Writes[Request[T, Resp]], ec: ExecutionContext): Future[JsValue] = {
+    println(s"Client - processing $req")
     wsClient.url(url)
       .addHttpHeaders(csrfToken.map(Client.CSRF_HEADER -> _).toSeq: _*)
       .post(Json.toJson(req))
