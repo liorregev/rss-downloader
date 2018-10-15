@@ -9,31 +9,62 @@ import com.liorregev.rssdownloader.transmission.domain.{AddTorrentRequest, AddTo
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 
 import scala.concurrent.ExecutionContext.Implicits._
-import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
+import scala.concurrent.{Await, Future}
+import scala.io.StdIn
 
 object Main extends App {
-  implicit val system: ActorSystem = ActorSystem()
-  implicit val materializer: ActorMaterializer = ActorMaterializer()
-  implicit val wsClient: StandaloneAhcWSClient = StandaloneAhcWSClient()
+  final case class Config(rssURL: String = "", serverIP: String = "")
 
-  val rssReader = new RssReader("http://showrss.info/user/112814.rss?magnets=true&namespaces=true&name=clean&quality=hd&re=null")
-  val txClient = new Client("http://liornas:9092/transmission/rpc/")
-  val store = new MySQLDownloadsStore("jdbc:mysql://liornas:3306/torrents")
+  private val parser = new scopt.OptionParser[Config]("scopt") {
+    head("scopt", "3.x")
 
-  system.scheduler.schedule(Duration.Zero, 10 minutes, new Runnable {
-    override def run(): Unit = {
-      val result = for {
-        items <- rssReader.read()
-        queriedItems <- Future.sequence(items.map(item => store.containsItem(item).map(item -> _)))
-        resps <- Future.sequence(queriedItems.filterNot(_._2).map(_._1)
-          .map(item => txClient.request(AddTorrentRequest(TorrentSource.Filename(item.link))).map(item -> _)))
-        storeResults <- Future.sequence(resps.filter(_._2.isRight).collect {
-          case (item, Right(AddTorrentResponse(AddTorrentResult.Success(_, id, _), _, _))) =>
-            StoredTorrent(0, item.showName, item.season, item.episode, item.link, id)
-        }.map(store.storeTorrent))
-      } yield storeResults
-      Await.result(result, 5 minutes)
-    }
-  })
+    opt[String]('r', "rssURL")
+      .required()
+      .action( (x, c) => c.copy(rssURL = x) )
+      .text("The RSS feed URL")
+
+    opt[String]('s', "serverIP")
+      .required()
+      .action( (x, c) => c.copy(serverIP = x) )
+      .text("The IP for the MySQL db and Transmission")
+  }
+
+  parser.parse(args, Config()) match {
+    case Some(config) =>
+      implicit val system: ActorSystem = ActorSystem()
+      implicit val materializer: ActorMaterializer = ActorMaterializer()
+      implicit val wsClient: StandaloneAhcWSClient = StandaloneAhcWSClient()
+
+      val rssReader = new RssReader(config.rssURL)
+      val txClient = new Client(s"http://${config.serverIP}:9092/transmission/rpc/")
+      val store = new MySQLDownloadsStore(s"jdbc:mysql://${config.serverIP}:3306/torrents")
+
+      sys.addShutdownHook({
+        wsClient.close()
+        system.terminate()
+      })
+
+      system.scheduler.schedule(Duration.Zero, 1 hour, new Runnable {
+        override def run(): Unit = {
+          val result = for {
+            items <- rssReader.read()
+            queriedItems <- Future.sequence(items.map(item => store.containsItem(item).map(item -> _)))
+            responses <- Future.sequence(queriedItems.filterNot(_._2).map(_._1)
+              .map(item => txClient.request(AddTorrentRequest(TorrentSource.Filename(item.link))).map(item -> _)))
+            storeResults <- Future.sequence(responses.filter(_._2.isRight).collect {
+              case (item, Right(AddTorrentResponse(AddTorrentResult.Success(_, id, _), _, _))) =>
+                StoredTorrent(0, item.showName, item.season, item.episode, item.link, id)
+            }.map(store.storeTorrent))
+          } yield storeResults
+          Await.result(result, 5 minutes)
+        }
+      })
+
+      StdIn.readLine()
+      wsClient.close()
+      system.terminate()
+    case None =>
+  }
+
 }

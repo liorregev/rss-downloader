@@ -11,6 +11,8 @@ sealed trait ClientError
 final case class ResponseParseError(jsError: JsError) extends ClientError
 
 class Client(url: String)(implicit wsClient: StandaloneWSClient) extends JsonBodyWritables with JsonBodyReadables {
+
+  @SuppressWarnings(Array("org.wartremover.warts.Var"))
   var csrfToken: Option[String] = None
 
   def request[T <: RequestType, Resp <: Response[T]](req: Request[T, Resp])

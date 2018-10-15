@@ -5,7 +5,7 @@ import slick.jdbc.MySQLProfile.api._
 import slick.lifted.ProvenShape
 import slick.sql.SqlProfile.ColumnOption.SqlType
 
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 
 final case class StoredTorrent(id: Int, showName: String, season: Int, episode: Int, link: String, torrentId: Int)
 
@@ -15,7 +15,7 @@ class Torrent(tag: Tag) extends Table[StoredTorrent](tag, "torrents") {
   def season: Rep[Int] = column[Int]("season")
   def episode: Rep[Int] = column[Int]("episode")
   def link: Rep[String] = column[String]("link", SqlType("TEXT"))
-  def torrentId: Rep[Int] = column[Int]("torrentId")
+  def torrentId: Rep[Int] = column[Int]("torrentId", O.Unique)
 
   // Every table needs a * projection with the same type as the table's type parameter
   def * : ProvenShape[StoredTorrent] = (id, showName, season, episode, link, torrentId) <> ((StoredTorrent.apply _).tupled, StoredTorrent.unapply)
@@ -39,5 +39,14 @@ class MySQLDownloadsStore(dbURL: String) {
       .exists
       .result
     db.run(query)
+  }
+
+  def loadByTorrentId(torrentId: Int)
+                     (implicit ec: ExecutionContext): Future[Option[StoredTorrent]] = {
+    val query = torrents
+      .filter(_.torrentId === torrentId)
+      .take(1)
+      .result
+    db.run(query).map(_.headOption)
   }
 }
