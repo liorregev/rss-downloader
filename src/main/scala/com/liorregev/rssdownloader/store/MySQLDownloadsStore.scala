@@ -1,5 +1,6 @@
 package com.liorregev.rssdownloader.store
 
+import ch.qos.logback.classic.LoggerContext
 import com.liorregev.rssdownloader.reader.Item
 import slick.jdbc.MySQLProfile.api._
 import slick.lifted.ProvenShape
@@ -21,17 +22,19 @@ class Torrent(tag: Tag) extends Table[StoredTorrent](tag, "torrents") {
   def * : ProvenShape[StoredTorrent] = (id, showName, season, episode, link, torrentId) <> ((StoredTorrent.apply _).tupled, StoredTorrent.unapply)
 }
 
-class MySQLDownloadsStore(dbURL: String) {
+class MySQLDownloadsStore(dbURL: String)
+                         (implicit loggerFactory: LoggerContext){
+  private lazy val logger = loggerFactory.getLogger(getClass)
   private val db = Database.forURL(dbURL, "admin", "admin")
   private val torrents = TableQuery[Torrent]
 
   def storeTorrent(storedTorrent: StoredTorrent): Future[Unit] = {
-    println(s"SQL - Adding $storedTorrent")
+    logger.info(s"Adding $storedTorrent")
     db.run(DBIO.seq(torrents += storedTorrent))
   }
 
   def containsItem(item: Item): Future[Boolean] = {
-    println(s"SQL - Checking $item")
+    logger.debug(s"Checking $item")
     val query = torrents
       .filter(torrent => torrent.showName === item.showName)
       .filter(torrent => torrent.season === item.season)
@@ -43,6 +46,7 @@ class MySQLDownloadsStore(dbURL: String) {
 
   def loadByTorrentId(torrentId: Int)
                      (implicit ec: ExecutionContext): Future[Option[StoredTorrent]] = {
+    logger.info(s"Loading torrent $torrentId")
     val query = torrents
       .filter(_.torrentId === torrentId)
       .take(1)

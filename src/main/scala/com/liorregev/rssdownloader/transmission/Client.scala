@@ -6,18 +6,23 @@ import play.api.libs.ws.{JsonBodyReadables, JsonBodyWritables, StandaloneWSClien
 
 import scala.concurrent.{ExecutionContext, Future}
 import cats.syntax.either._
+import ch.qos.logback.classic.LoggerContext
 
 sealed trait ClientError
 final case class ResponseParseError(jsError: JsError) extends ClientError
 
-class Client(url: String)(implicit wsClient: StandaloneWSClient) extends JsonBodyWritables with JsonBodyReadables {
+class Client(url: String)(implicit wsClient: StandaloneWSClient, loggerFactory: LoggerContext)
+  extends JsonBodyWritables with JsonBodyReadables {
 
   @SuppressWarnings(Array("org.wartremover.warts.Var"))
-  var csrfToken: Option[String] = None
+  private var csrfToken: Option[String] = None
+
+  private lazy val logger = loggerFactory.getLogger(getClass)
 
   def request[T <: RequestType, Resp <: Response[T]](req: Request[T, Resp])
                                                     (implicit writes: Writes[Request[T, Resp]],
                                                      ec: ExecutionContext): Future[Either[ClientError, Resp]] = {
+    logger.info(s"Processing $req")
     runRequest(req)
       .map(req.responseReads.reads)
       .map {
@@ -28,12 +33,13 @@ class Client(url: String)(implicit wsClient: StandaloneWSClient) extends JsonBod
 
   private def runRequest[Resp <: Response[T], T <: RequestType](req: Request[T, Resp])
                                                                (implicit writes: Writes[Request[T, Resp]], ec: ExecutionContext): Future[JsValue] = {
-    println(s"Client - processing $req")
+    logger.debug(s"Sending request $req")
     wsClient.url(url)
       .addHttpHeaders(csrfToken.map(Client.CSRF_HEADER -> _).toSeq: _*)
       .post(Json.toJson(req))
       .flatMap(resp => {
         if (resp.status == 409) {
+          logger.warn(s"Got 409, setting CSRF and re-sending")
           csrfToken = resp.header(Client.CSRF_HEADER)
           runRequest(req)
         } else {

@@ -2,6 +2,8 @@ package com.liorregev.rssdownloader
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
+import ch.qos.logback.classic.util.ContextInitializer
+import ch.qos.logback.classic.{Logger, LoggerContext}
 import com.liorregev.rssdownloader.reader.RssReader
 import com.liorregev.rssdownloader.store.{MySQLDownloadsStore, StoredTorrent}
 import com.liorregev.rssdownloader.transmission.Client
@@ -11,7 +13,6 @@ import play.api.libs.ws.ahc.StandaloneAhcWSClient
 import scala.concurrent.ExecutionContext.Implicits._
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
-import scala.io.StdIn
 
 object Main extends App {
   final case class Config(rssURL: String = "", serverIP: String = "")
@@ -32,6 +33,15 @@ object Main extends App {
 
   parser.parse(args, Config()) match {
     case Some(config) =>
+      implicit lazy val loggerFactory: LoggerContext = {
+        val loggerContext = new LoggerContext()
+        val contextInitializer = new ContextInitializer(loggerContext)
+        contextInitializer.autoConfig()
+        loggerContext
+      }
+      lazy val logger: Logger = loggerFactory.getLogger("com.liorregev.rssdownloader.Main")
+      logger.info("Starting")
+
       implicit val system: ActorSystem = ActorSystem()
       implicit val materializer: ActorMaterializer = ActorMaterializer()
       implicit val wsClient: StandaloneAhcWSClient = StandaloneAhcWSClient()
@@ -47,6 +57,7 @@ object Main extends App {
 
       system.scheduler.schedule(Duration.Zero, 1 hour, new Runnable {
         override def run(): Unit = {
+          logger.info("Checking feed")
           val result = for {
             items <- rssReader.read()
             queriedItems <- Future.sequence(items.map(item => store.containsItem(item).map(item -> _)))
@@ -60,10 +71,6 @@ object Main extends App {
           Await.result(result, 5 minutes)
         }
       })
-
-      StdIn.readLine()
-      wsClient.close()
-      system.terminate()
     case None =>
   }
 

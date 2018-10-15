@@ -1,10 +1,11 @@
 package com.liorregev.rssdownloader
 
-import java.io.File
 import java.nio.file.Files
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
+import ch.qos.logback.classic.util.ContextInitializer
+import ch.qos.logback.classic.{Logger, LoggerContext}
 import com.liorregev.rssdownloader.store.{MySQLDownloadsStore, StoredTorrent}
 import com.liorregev.rssdownloader.transmission.Client
 import com.liorregev.rssdownloader.transmission.domain.{TorrentActionRequest, TorrentActionType, TorrentIdentifiers}
@@ -29,14 +30,14 @@ object CompletionScript extends App {
       .action( (x, c) => c.copy(torrentId = x) )
       .text("The torrent ID")
 
-    opt[File]('d', "torrentDirectory")
+    opt[String]('d', "torrentDirectory")
       .required()
-      .action( (x, c) => c.copy(torrentDirectory = Path(x).toDirectory) )
+      .action( (x, c) => c.copy(torrentDirectory = Path(x.trim).toDirectory))
       .text("The torrent directory")
 
-    opt[File]('o', "tvShowsDirectory")
+    opt[String]('o', "tvShowsDirectory")
       .required()
-      .action( (x, c) => c.copy(tvShowsDirectory = Path(x).toDirectory) )
+      .action( (x, c) => c.copy(tvShowsDirectory = Path(x.trim).toDirectory) )
       .text("The directory for storing TV shows")
 
     opt[String]('s', "serverIP")
@@ -55,6 +56,13 @@ object CompletionScript extends App {
   }
 
   private def handleCompletion(config: Config): Unit = {
+    implicit lazy val loggerFactory: LoggerContext = {
+      val loggerContext = new LoggerContext()
+      val contextInitializer = new ContextInitializer(loggerContext)
+      contextInitializer.autoConfig()
+      loggerContext
+    }
+    lazy val logger: Logger = loggerFactory.getLogger("com.liorregev.rssdownloader.CompletionScript")
     implicit val system: ActorSystem = ActorSystem()
     implicit val materializer: ActorMaterializer = ActorMaterializer()
     implicit val wsClient: StandaloneAhcWSClient = StandaloneAhcWSClient()
@@ -81,7 +89,7 @@ object CompletionScript extends App {
                   seriesSeasonPath.createDirectory()
                   val newFileName = s"${torrentData.showName.replaceAll(raw"[^\w\d]", "").toLowerCase}.s${torrentData.season}.e${"%02d".format(torrentData.episode)}${getFileExtension(file)}"
                   val newFilePath = seriesSeasonPath / newFileName
-                  println(s"Moving ${file.path} -> ${newFilePath.path}")
+                  logger.info(s"Moving ${file.path} -> ${newFilePath.path}")
                   Files.move(file.jfile.toPath, newFilePath.jfile.toPath)
               }
         }
